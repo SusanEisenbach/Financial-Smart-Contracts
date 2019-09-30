@@ -1,0 +1,59 @@
+.deploy-controls__container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    width: 100%;
+}
+
+.deploy-controls__details-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+
+    width: 100%;
+}
+
+.deploy-controls__contract {
+    margin: 0.8em 0 1em 0;
+}
+
+.deploy-controls__holder-label {
+    margin-top: 2em;
+}
+
+.deploy-controls__holder-input {
+    margin: 1em 0 1em 0;
+    font-size: 1.2em;
+    width: 25em;
+}
+
+.deploy-controls__use-gas-input {
+    margin: 3em 0 1em 0;
+    cursor: pointer;
+}
+
+.deploy-controls__use-gas-checkbox {
+    margin-right: 1em;
+}
+
+.deploy-controls__button-container {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+
+    width: 100%;
+    margin-top: 1em;
+}
+
+.deploy-controls__deploy-button {
+    flex: 0 0 auto;
+}
+
+.deploy-controls__contract-error {
+    margin-top: 1em;
+}
+
+.deploy-controls__holder-error {
+    margin-top: 1em;
+}

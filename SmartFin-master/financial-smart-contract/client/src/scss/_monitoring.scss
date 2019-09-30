@@ -1,0 +1,113 @@
+.monitoring__main-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    margin: 0 auto;
+}
+
+.monitoring__size-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    min-width: 60%;
+}
+.monitoring__contract-address {
+    margin-bottom: 1em;
+}
+
+.monitoring__no-contract-error {
+    margin-bottom: 1em;
+}
+
+.monitoring__contract-interactables {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+
+    width: 100%;
+    margin-top: 1.5em;
+}
+
+.monitoring__contract-details {
+    display: flex;
+    flex-direction: column;
+
+    flex: 1 1 auto;
+    font-size: 1.2em;
+    margin-right: 2em;
+    min-width: 40em;
+    margin-bottom: 3em;
+}
+
+.monitoring__basic-details {
+    display: flex;
+    flex-direction: row;
+}
+
+.monitoring__detail-labels {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+
+    margin-right: 0.5em;
+}
+
+.monitoring__detail-label,
+.monitoring__detail {
+    margin-bottom: 0.5em;
+    &:last-child {
+        margin-bottom: 0;
+    }
+}
+
+.monitoring__detail {
+    font-style: italic;
+}
+
+.monitoring__details {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.monitoring__contract-buttons {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: flex-start;
+}
+
+.monitoring__contract-button {
+    width: 12em;
+    margin-bottom: 1em;
+    &:last-child {
+        margin-bottom: 0;
+    }
+}
+
+.monitoring__drop-down {
+    padding-top: 0.5em;
+    padding-bottom: 2em;
+    border-bottom: 1px ridge $colour-border;
+    box-sizing: border-box;
+}
+
+.monitoring__combinator-contract-container {
+    width: 40em;
+    word-break: break-word;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.monitoring__obs-entries {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+}
+
+.monitoring__obs-entries-spacer {
+    width: 0.5em;
+    height: 100%;
+}

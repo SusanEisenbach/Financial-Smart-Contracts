@@ -1,0 +1,35 @@
+.message__container {
+    border-radius: 5px;
+    border: 2px solid transparent;
+    width: 100%;
+    padding: 0.5em;
+    box-sizing: border-box;
+}
+
+.message__container--error,
+.message__container--error * {
+    border-color: $colour-err-dark;
+    background-color: $colour-err-light;
+    color: $colour-text-err;
+}
+
+.message__container--info,
+.message__container--info * {
+    border-color: $colour-info-dark;
+    background-color: $colour-info-light;
+    color: $colour-text-info;
+}
+
+.message__container--warning,
+.message__container--warning * {
+    border-color: $colour-warning-dark;
+    background-color: $colour-warning-light;
+    color: $colour-text-warning;
+}
+
+.message__container--success,
+.message__container--success * {
+    border-color: $colour-success-dark;
+    background-color: $colour-success-light;
+    color: $colour-text-success;
+}

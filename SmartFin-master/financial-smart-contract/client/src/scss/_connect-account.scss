@@ -1,0 +1,98 @@
+// The styling for the ConnectAccount component
+
+.connect-account__main-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.connect-account__metamask-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+
+    flex: 1 0 1em;
+    margin-top: 7em;
+}
+
+.connect-account__metamask-title {
+    margin: 1em;
+    font-size: 2em;
+}
+
+.connect-account__manual-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1 0 1em;
+    justify-content: flex-start;
+
+    margin: 2em;
+}
+
+.connect-account__metamask-connect-button,
+.connect-account__manual-connect-button,
+.connect-account__manual-unlock-account-button {
+    width: 12em;
+}
+
+.connect-account__manual-title {
+    font-size: 1.5em;
+    margin-bottom: 2em;
+}
+
+.connect-account__manual-url-container,
+.connect-account__manual-account-details-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.connect-account__manual-account-details-container--hidden {
+    display: none;
+}
+
+.connect-account__manual-labels-inputs-container {
+    display: flex;
+    flex-direction: row;
+    justify-content: end;
+}
+
+.connect-account__manual-label-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 0.4em;
+}
+
+.connect-account__manual-input-container {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.connect-account__manual-address-label,
+.connect-account__manual-password-label,
+.connect-account__manual-url-label {
+    font-size: 1.2em;
+    width: 8em;
+    text-align: right;
+}
+
+.connect-account__manual-address-input,
+.connect-account__manual-password-input,
+.connect-account__manual-url-input {
+    font-size: 1.2em;
+    margin: 0.2em;
+}
+
+.connect-account__manual-connect-button {
+    margin: 1em 0;
+}
+
+.connect-account__manual-unlock-account-button {
+    margin: 1em 0;
+}
