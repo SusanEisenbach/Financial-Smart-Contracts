@@ -1,0 +1,1566 @@
+========== 06 Feb ==========
+
+Implemented proof of concept in the java-PoC submodule (sandbox/java-PoC):
+	- Command-line interface
+	- Takes in acquisition time and contract definition
+	- Parses contract and generates contract object (made up of combinator objects)
+	- Abstract combinator object, extended by concrete combinator implementations
+		- horizon, combinator type, and acquire method
+	- Sub-combinators override getHorizon when needed (e.g. truncate)
+	- Works pretty well until you get to a combinator which requires input, e.g. or and anytime
+	- Evaluation is pretty simple in this form
+
+
+
+========== 19 Feb ==========
+
+Started Rust investigation:
+	- Went through docs
+	- Completed multiple rust tutorials
+	- Implemented rust proof-of-concept:
+		- Similar to Java
+		- Has zero, one, and, truncate combinators
+		- Uses traits/structs instead of objects/inheritance
+		- Works pretty similarly to java PoC
+	- Rust testing done in the rust-test submodule (sandbox/rust-test)
+
+Separated git repo into submodules under one group (so that only one submodule must be downloaded at a time)
+
+
+
+========== 20 Feb ==========
+
+Started rust -> ewasm investigation:
+	- Parity basically does this
+	- Followed tutorial at https://github.com/paritytech/pwasm-tutorial
+	- Requires specific cargo.lock for version compatibility, and doesn't build on the stable rust toolchain (I think it can but manually throws an error if you try)
+	- Created rust test contract (returns owner on function call)
+	- Added scripts for building (npm install web3, run parity node, then add account with curl, then run node client with deploy-contract.js)
+	- Almost works, up to actually deploying the contract (transaction runs out of gas always)
+
+
+
+========== 27 Feb ==========
+
+Finally got a basic contract deployed:
+	- Cargo toml and lock probably not correct, so fixed, also added .cargo/config, and now using yarn (instead of nothing)
+	- Geth compatibility mode was required to unlock account in code in the node console, so instead unlock the account via the command to start parity (this requires creating the blockchain, creating the account, and then running the blockchain with the account unlocked - fiddly)
+	- Contract transaction creation was convoluted, so simplified slightly
+	- BIGGEST FIX: cargo.toml was naming the file "smart-contract-test", but in order for the wasm file to work it MUST be called "smart_contract_test" with underscores. I don't know why and idk how you're supposed to know this, but you can't preview the wasm file as wat if it's broken like this, and you can't deploy to the blockchain bc it always has "not enough gas" (not a helpful error)
+
+Set up a private blockchain with geth, but haven't tested deploying the wasm contract as ran into the same issue as above
+
+Minor adjustments to the smart contract, not 100% sure it even works because its late and I just got it to deploy
+
+
+
+========== 04 Mar ==========
+
+Contract deployment fails on first attempt (per-chain) due to incorrect gas estimation. After the first failure, the chain always estimates correctly (approx). Weird.
+
+Improved scripts:
+	- Chain-cleaning, account-initialising, and node-running now all combined into run-node.sh
+	- clean-node.sh kept for standalone usage
+	- Node can be run with ./run-node.sh, and this will start the parity node and then initialise the "user" account. Passing --clean will clean the blockchain.
+
+Geth compatibility mode is used again, so the account must be unlocked from the node client before deploying a contract (this was necessary to allow multiple accounts to be accessed, which will eventually be a requirement).
+
+Fixed issue with giving a non-integer to web3.utils.toHex for the gas value, which was breaking contract deployment when the gas multiplier wasn't an integer.
+
+Added unit test to test smart contract, and test-running script (it works really well).
+
+Main rust contract:
+	- Set up directory with required files
+	- Made basic smart contract and dir structure
+	- Unit test for basic smart contract
+	- Implemented some combinator objects, IMPORTANT: can't have a state variable with unknown size at compile time on the smart contract, so need another way to handle contracts (maybe serialization)
+
+
+
+========== 08 Apr ==========
+
+First day working after exams
+
+Had a look at the serialization problem, and had a few possible revelations:
+	- It's likely that you actually CAN fiddle with memory/heap stuff without just using read/write (using stuff like Box instead), as the other pwasm example contract (https://github.com/paritytech/pwasm-repo-contract/blob/master/contract/src/lib.rs) does it with a Vec (I think the pwaswm::std stuff implements it nicely or else they wouldn't have much purpose, i have no idea why the default example is so convoluted)
+
+	- None of the rust code is actually running anywhere, it's compiled straight to wasm and then deployed. This means that any inputs need to be either:
+		- Directly into the code (i.e. treating it as a template as discussed in the report) - doing this is a bit messy, but its by far the easiest to program for many reasons
+
+		- Through the constructor (as an argument javascript) - this is kind of nicer from a user PoV (probably requiring less stuff to be run), and better style i guess, but is a lot harder to achieve as it requires de/reserializing whatever is received in the constructor into actual combinator objects, potentially requiring actual deserialization of numbers to strings, and then from strings to combinators
+		- Cannot directly recieve strings over ABI in pwasm (despite the actual ABI docs claiming you can), so would have to serialize string in js, send in constructor, then deserialize string in rs.
+
+Looking at js/eth abi/pwasm, it may not be so terrible to go from js -> rust with the contract definition. If it's typed into the js, it can be converted to a utf-16 array of bytes relatively painlessly, passed into the contract constructor relatively painlessly, and then reconstructed into a pwasm_std::String relatively painlessly. The problem is that this process deals with the finnicky/tempermental part of the toolchain and I'm not confident that "relatively painless" will not end up being super difficult. It's worth a try I guess, either way the rust program will have to convert string to combinator so it's not a waste (plus that logic exists in the java PoC anyway).
+
+
+
+========== 09 Apr ==========
+
+After some thought, it seems better imo to provide the combinator contract through the constructor. This will need to be in the form of a bytes array. Need to decide whether or not we should just send the string representing the contract serialized, or some more abstract representation (e.g. 0 = zero, 1 = one, 2 = and, 3 = or, etc..).
+
+Sending the string serialized is less work on the javascript side, and should be easy to handle sending/receiving the data across the gap. Unfortunately, it requires doing string processing in the smart contract constructor. Not only does this cost gas, but it may be difficult due to lacking the std lib (should only really need a split function though). Also, we still need to do string processing on the js side for verification.
+
+Sending a simpler representation of the contract in a bytes array requires manual serialization on the JS side, manual deserialization on the rs side, and coordinating these two sides to use the same serialization method (will have to code (de)serialization once per side). This is more work from a dev standpoint, but moves all string processing to the JS side, and reduces the gas cost and complexity of the smart contract. It does require sending a poorly-defined data type through the constructor which could be considered bad design, however.
+
+Decided to use the serialize in JS to bytes, then deserialise in rs.
+
+- Written code to deserialize vector of bytes in rust
+- Smart contract populates itself with combinators (all boxed so should stay in memory)
+- Constructor now accepts vector of bytes, hopefully should be able to send a byte array from JS and it should curry automatically
+- Added tests for various deserialized combinators
+
+
+
+========== 11 Apr ==========
+
+Have tested passing a Uint8Array into the constructor in JS when deploying on the parity chain, seems to work perfectly!! Also throws exceptions when the constructor panics (due to empty array or invalid combinator sequence), which is good (panic works as expected). This is really good news as I expected it to be a massive pain.
+
+Added combinator contract parsing to JS, through user input (using node's readline module). A contract can be passed in, and is parsed and serialized, then a contract is deployed with the serialized combinator contract passed to the constructor, then the smart contract deserializes the combinator contract into combinator objects (in rust). Works nicely!
+
+Added a deploy.sh script which runs everything needed to deploy a contract with cli input (on the parity node).
+
+Major features which still need implementing:
+	- Date/time (truncate)
+	- Observables and "or" combinator
+	- Stake and withdrawal
+	- Signing and setting potential holder
+	- Acquisition and related combinators (anytime, get)
+
+- Have implemented holder
+- Implemented staking by holder and counter-party
+- Improved module layout so all combinators are imported through one import (don't need to import new combinators in financial_sc.rs, only combinators/mod.rs)
+- deploy_contract.js modified to also take holder address
+- Added null combinator, instead of using Option<Box<ContractCombinator>> (so that the contract is initialised with NullCombinator, instead of None, before calling the constructor):
+	Null combinator always throws errors, as it isn't meant to be used post-initialisation. It is used to replace None as they basically function the same, and although None is a bit nicer as a rust builtin, having to unwrap Some(Box(Combinator)) every time we do anything is pretty obnoxious, and the function hasn't really changed. This does add a "new" combinator, which is a bit dodgy design-wise so need to mention that somewhere! Of course, it's not actually a part of the combinator language, as it can't be used when writing contracts in the DSL.
+
+
+
+========== 12 Apr ==========
+
+Planning to implement SCALE and OR. This requires dealing with observables/input to the contract. Some thoughts:
+	- Given lack of maps (no std), will likely store these in a vector (i.e. vec for OR choices, vec for OBS values, etc)
+	- Indexing of each OR will be 0 to N for N OR combinators in a contract, same for unprovided observables
+	- Observables could be pre-defined in the contract (e.g. SCALE 5 ONE will always be worth 5), or left undefined and provided later (something like SCALE OBS ONE)
+	- A contract with undefined observables in the subset of combinators which will currently be acquired cannot be acquired, and probably cannot be evaluated
+	- A contract with undefined observables in the subset of combinators which will not be acquired can be acquired (e.g. acquire(2) of AND TRUNCATE 1 SCALE OBS ONE ONE, where the SCALE OBS ONE sub-contract won't be acquired at time 2)
+	- Can denote undefined observables by "OBS" in the combinator contract
+	- Observable values/OR choices can be provided in provide(index, value) functions (one for obs, one for ors) using the indexing scheme above
+	- Observable values must be signed by one party and provided by the other (so both are in agreement)
+	- OR choices can only be provided by the holder (always true)
+
+Implementing OR combinator:
+	- Similar to AND, but has an or_index
+	- When calling get_value, the vector of or_choices must be passed down to the combinators for niceness (don't want to call back with a reference to the contract bc its cyclical)
+	- ContractCombinator imports Vec and Box, so that extern crate is only called once (for the combinators) and can be switched out (theoretically, practically this will never happen)
+	- OR combinator is provided an index at construction (kept track of by the length of or_choices), or choice is set to None initially
+	- when get_value is called the combinator looks up its index in or_choices
+
+Implementing TRUNCATE combinator:
+	- Single sub-combinator and horizon time
+	- Requires deserializing a 4-byte unix timestamp, functions implemented to do this using maths (as transmute is not available in the limited std lib)
+	- Testing function added to serialize a u32 timestamp
+	- All timestamps/horizons changed to u32 type for consistency (as it will always be a 32-bit unix timestamp)
+
+Implementing SCALE combinator and observables:
+	- Single sub-combinator, obs_index, and scale_value
+	- Requires carrying around an obs_values vector, like the or_choices vector (except with u64 values)
+	- u64 chosen as everything will have to be converted to u64 in the end anyway, so no point carrying around U256 values
+	- If scale value is provided, the combinator contract will be serialized as 5 1 <8-bit scale-value> <sub-combinator>, otherwise 5 0 <sub-combinator> if an observable should be used instead
+	- With no observable defined or scale value, getting value will panic
+	- Setting scale value requires signature stuff, have not done yet (should hopefully not be too hard as keccak lib is provided)
+
+
+NB ABOUT EXPIRED CONTRACTS: Expired contracts can be acquired (kind of), but their value is zero. This means that the wording for truncate in the report is wrong, as it says that expired contracts cannot be acquired. I think that there is nothing stopping someone from acquiring an expired contract (just as in real life, where someone can sign a contract even if the dates of payments have passed), but the contract just has a value equal to the ZERO combinator.
+
+For tomorrow, will allow setting of observables (using signatures). Will also implement give (easy), and start looking at acquisition (hard).
+
+
+
+========== 13 Apr ==========
+
+Bad news, there is no ECDSA (or any encrypt/decrypt) functionality in pwasm (weirdly). This leaves two options:
+	- Trying to implement a signature scheme using only Keccak (complicated, inefficient, hard to program)
+	- Don't use signatures at all, instead use a voting-like system (easier to program, but has more design decisions and is not as elegant, also may take more storage (although hash-based signatures often take a lot of storage too))
+
+Overall, it seems more sensible to forego signatures, instead using a system like:
+	- Each obs_value has a concrete value, a proposed-by-holder value, and a proposed-by-counter-party value (all Option<u64>)
+	- Each party can propose a value for each obs_index at any time through a function, the contract stores the latest proposed value only per observable (if holder proposes 1 then 2, only 2 is stored and 1 is lost)
+	- If the two parties' latest proposed value match, then the concrete value is set to the proposed value
+	- The concrete value only updates when a new matching pair of proposals occurs. If both parties propose 1, then the holder proposes 2, the concrete value is 1. If the holder and counter-party propose 2 after agreeing on 1, the concrete value is 2.
+
+Implementing OBS values:
+	- Vec<Option<u64>> for concrete values, as well as proposed values by holder and counter-party (3 vectors in total)
+	- Propose obs value function updates the relevant party's proposed value for the given index
+	- If both parties agree upon a proposal, the concrete values vector is updated
+	- Panics if uninvolved party proposes value
+
+NB: Will need to provide some way to view or-choices and obs-values in future, unfortunately it's a little complicated as they're Option<u64>, so will require double serialization (option and u64). May leave that until a front-end is created.
+
+Implementing GIVE:
+	- Have to change value to i64 and update all combinators
+	- Have to change scale value to i64, does accepting a negative value here make sense? It does mathematically, but from a financial contract point of view, what does it mean to pay someone negative amounts of Eth?
+	- Have to change obs_value to i64 (same reason, and to be consistent with scale_value)
+
+NB: Updated all U256 to i64/u64 since apparently those are in the abi lol
+
+
+
+========== 15 Apr ==========
+
+Implemented THEN:
+	- Similar to AND, except value takes sub_combinator0.get_value() if it hasn't expired yet, otherwise sub_combinator1.get_value(). Pretty simple
+
+Reorganising tests:
+	- Most of the tests in financial_sc.rs are integration tests, so they shouldn't really be in the same file
+	- Moving most tests from financial_sc.rs to an integration tests folder
+	- Adding unit tests for financial_sc (deserialization etc)
+	- Adding unit tests for each combinator's file
+
+	- Most tests in financial_sc.rs moved to separate integration test file, financial_sc.rs moved into lib.rs (as there's not a big reason to keep it separate and that's the rust way apparently)
+	- Some tests kept in lib.rs as unit tests for FinancialScContract struct
+	- Unit tests added for all combinators (time consuming but makes more sense this way)
+	- Unit tests which should panic will now check the error message
+	- Unit tests which fail should give a reason for failure
+	- Due to the differing test architecture (separate crates for integration tests), the build manifest (crate-type=["cdylib"]) doesn't work (although we don't need this for any of the functionality that's actually being tested). To work around this, the cdylib is replaced with the default "lib" when the testing script is run, and then switched back after it finished. The build script also sets cdylib just to make sure. It's a bit fiddly, but there's no other way to work around this without reverting to the old test structure (which was very bad imo, unsustainable the more I add). The generate-cargo.sh script creates the templated manifests from cargo-template.toml. 
+
+NB: Any changes to the manifest should now be made in cargo-template.toml (although I doubt there will be any).
+
+Other misc changes:
+	- All combinators with sub-combinators have horizons derived from them
+
+Not started on get or anytime yet, hopefully can implement over the next two days (and nothing much left after that with the smart contract.
+
+
+
+========== 16 Apr ==========
+
+Fixing serialization/deserialization to use pwasm_std write/read functions, so that native endianness is never an issue (idk if its ever actually an issue in ewasm but better safe than sorry):
+	- Both functions now use read/write_u32/u64
+	- Signed 64-bit function now converts i64 to u64, and then serializes, or vice-versa for deserialization
+	- To convert u64 to i64:
+		- if u64 > 2^63, then i64 will be negative
+		- For an n-bit number, bit[0] * 2^0 + bit[1] * 2^1... + bit[n-2] * 2^n-2 - bit[n-1] * 2^n-1 = 2's complement, or + bit[n-1] * 2^n-1 for unsigned (ignoring endianness, bit[n-1] is most significant)
+		- To convert from u64 > 2^63 to i64, must do u64 - 2^64
+		- This must be done as i64 = u64 - 2^63, followed by i64 = I64 - 2^62 - 2^62, to account for size limits on the types
+		- This process can be done in reverse to convert i64 -> u64, i.e. u64 = (i64 + 2^62 + 2^62) as u64 + 2^63
+	- Added tests for deserialization functions
+	- Made numbers more complicated where deserialization occurs to ensure tests check things properly
+
+NB: MAY LEAD TO ISSUES LATER - the read/write functions appear to use machine's native endianness, whereas can't guarantee the JS that does the serialization will use the same endianness. Might have to define the serialization/deserialization myself, to ensure endianness matches at both sides, even if it doesn't match the native endianness.
+
+Acquisition time!! Handling acquisition finally, decided upon the following model:
+	- Every combinator has an acquisition_time: Option<u32>, and a fully_updated: bool
+	- When acquire is called, acquire is called on the combinator, which calls acquire on sub combinators
+	- In each acquire method, the combinator sets its acquisition_time to the given acquisition_time (if it hasn't been set already), and then calls on sub-combinators
+	- Combinators can only be acquired once, and only before their horizon
+	- In order to handle funds, update must be called (this should be called on the contract combinator right after calling acquire)
+	- update will pass down the current time, obs_values, and or_choices, and get the amount of ether which is pending payment
+	- calling update on non-acquired combinators does nothing and returns 0
+	- calling it on combinators acquired in the future also does nothing
+	- calling it on fully-updated combinators also does nothing
+	- calling it on acquired combinators which aren't fully updated will calculate the payment pending in said combinator (and its sub-combinators where relevant), and return the final value. Once a combinator's sub-combinator(s) are marked as fully_updated, it marks itself as fully_updated, to mark that no funds are pending
+	- Get will set the acquisition time of the sub-combinator to the future
+	- Anytime will do the same, but there will be acquire_anytime(anytime_index) functions (like obs/or) to acquire anytime combinators before the horizon
+
+Have implemented acquire/update for null, zero, one, give, and scale, as well as tests. Stubs have been added for other combinators, to be filled in over the next two days. The FinancialScContract acquire/update methods have not been implemented.
+
+
+
+========== 17 Apr ==========
+
+Implementing acquire/update for more combinators (truncate, and, or, then):
+	- Truncate very similar to give/scale
+	- And acquires/updates both children
+	- Or checks or choice (must pass around or_choices in acquire), MAY change to handle ambiguous choice case, currently just panics
+		- Be careful to update based on acquisition_time, not time
+	- Then similar to or except based on horizon, not or choice
+		- Again, use acquisition_time not time
+
+Ensure that after acquiring the contract, or_choices and obs_values do not change (or have some limitation on their modification)
+Acquiring the contract should fail if missing or_choices or obs_values (should this happen for all or_choices/obs_values, or only ones on the active branch of the contract? If only the active branch, can handle during acquisition in the combinators which are missing information by panicking, the panic should propagate up the contract - this would require passing the or_choices/obs_values through the acquire functions though.) Maybe a separate validate function on the combinators, to traverse the tree cheaply before acquisition (although more expensive if validates successfully, but cheaper on failure). Also makes it easier to implement.
+
+Can't validate during acquisition, e.g. AND - if one branch succeeds then the second fails, no way to roll-back the first acquisition, thus we need to completely validate the combinator tree before starting acquisition. Added separate acquirable method to be called before acquisition, which checks if all sub-combinators on the active branch can be acquired.
+
+PROBLEM: Should we be able to set or choices and/or observable values AFTER acquisition? I would say that it makes sense for observable values if both parties agree and or choices if a value/choice has not already been used during an update call (i.e. can change from None to Some after calling update for the first time, but not Some(x) to Some(y)). If this change is made, should separate update and acquire (i.e. dont call update right after acquire by default), and update should lock in the concrete values. Acquire/acquirable can travers both branches on ambiguous OR, and update can return 0 on ambiguous OR/SCALE and not set fully_updated.
+
+Changed or combinator:
+	- If no or choice given, acquisition affects both branches, and update does nothing
+Changed scale combinator:
+	- If no obs_value or scale_value given, update does nothing
+
+Tomorrow: Implement acquirable (may not need after or choice change and scale value change, since all combinators may just be able to be acquired always?), implement top-level acquire/update, implement get and anytime.
+
+
+
+========== 18 Apr ==========
+
+- Acquiring should always succeed, so don't need acquirable
+
+Updating always succeeds, may be bad? For example, a contract and one give get 1 scale 2 one (get one now, give two later) can be acquired and updated, then when updated later without filling in the or-choice the give two never gets fulfilled. May be better to ignore non-filled-in or-choices/obs-values when updating before the acquisition time of the or/scale, but when an or/scale is updated after its acquisition time it must have a concrete or-choice or obs-value, or else it panics. This way it's harder to circumvent undesirable sub-combinators while carrying out desirable sub-combinators. This may be overkill, not really sure and probably need a discussion with another person about it. However, users may circumvent any undesirable results by simply not paying in stake, although this is easier to solve through a real world legal contract than the issue of providing or-choices.
+
+NB: QUESTIONS TO SOLVE (LATER?):
+	- Should or-choices and obs-values be unchangeable once provided, unchangeable past initial acquisition time of whole combinator, or unchangeable past the time they are relevant in calculating balance (the acquisition time of the combinator they are used by)?
+	- Should updating balance require all obs-values/or-choices upfront, only relevant obs-values/or-choices, or none (and skip ambiguous combinators)?
+
+- Removed acquirable (should always be able to acquire a combinator now)
+- AND now checks if sub-combinators have expired before acquiring them (otherwise will panic, and should acquire one if possible even if the other is expired)
+- Added GET:
+	- Acts like GIVE without negating, and sets acquisition time on sub-combinator to its horizon
+	- value is 0 before sub-combinator's horizon, value of sub-combinator afterwards
+	- If sub-combinator has no horizon, value is always 0 and sub-combinator won't be acquired upon acquisition, update will also skip the sub-combinator (as no known update time)
+- Added ANYTIME:
+	- Acquiring does NOT acquire sub-combinator, only self combinator
+	- anytime_acquisition_times vector now carried around
+	- If updating and the sub-combinator isnt acquired, when an acquisition time before its horizon and after the anytime combinator's acquisition time is provided it is passed into sub.acquire
+	- If no time is provided but the horizon is here/passed, sub.acquire(sub.horizon) is called
+	- If neither of these two occur, update does nothing
+	- Once the combinator has been acquired, it is updated as any other sub-combinator would be
+
+To do next:
+	- Add deserialization for GET and ANYTIME (8/9)
+	- Add API functionality to set anytime acquisition times
+	- Figure out how restrictive the contract will be on setting or-choices/obs-values/anytime-acquisition-times more than once each
+	- Add top-level acquire and update to API (should be simple) and missing balance-related functions (withdraw, rename get_stake to get_balance and make signed)
+	- Add integration tests for entire contracts
+	- Test IRL on parity blockchain, and write integration tests for entire chain (build and deploying contract, calling functions on deployed contract from js, etc)
+	- Write the web interface/evaluation tool
+
+
+
+========== 24 Apr ==========
+
+Adding deserialization for GET and ANYTIME, API functionality for acquire_anytime, acquire, update, and withdraw, and testing.
+
+- Updated get_stake:
+	- Renamed to get_balance
+	- Balance now treated as i64, updated all returns and functions using
+	- Now cannot stake more than 2^62 (as this would overflow an i64)
+	- safe_add now checks underflow (as using i64s not U256)
+	- Added tests for new changes
+
+- Updated deserialization
+	- Added deserialization of GET and ANYTIME (8/9)
+	- Serialized contract now represented as Vec<i64>!
+		- Timestamps and scale values can now be passed in/read directly, without serializing or deserializing them individually
+		- Tests updated and (de/)serialization functions removed
+
+- Added acquire and update to API
+	- Relatively straightforward, some checks, update will adjust the balances accordingly
+
+- Added acquire_anytime_sub_contract to API:
+	- If the new acquisition time (current block-time) is earlier to the existing acquisition time (None is latest), then replace - this prevents setting it to after a horizon, and implicitly prevents setting it twice (sensible imo)
+	- acquire on anytime now sets the acquisition time in the vector to the sub-combinator's horizon
+	- acquire and update on all combinators now take anytime_acquisition_times as an &mut vec
+	- update on anytime now only acquires the sub-combinator when the acquisition time has passed (simpler), and panics if the self-acquisition-time is later than sub-acquisition-time (should never get there anyway), also uses sub-horizon if the given acquisition time is later (this should never happen but done just in case)
+	- All tests adjusted
+
+- Added withdraw function to API:
+	- Takes an amount to withdraw
+	- Amount is clamped by the user's balance
+	- If the user can't afford to pay 2300 Wei in gas for the transfer, no transfer occurs
+	- If the user isn't involved in the contract, no transfer occurs
+	- The contract transfers using the call function
+
+- Testing
+	- Added unit tests for acquire, update, anytime acquire, withdraw
+	- Testing withdraw's call functionality doesn't seem possible using pwasm_test, can only test calls to known contract methods, not the call function
+
+Need to add more integration tests, then javascript tests (deploy -> integration tests), then javascript client.
+
+
+
+========== 25 Apr ==========
+
+Adding more integration tests, then setting up javascript testing. Also remove TODOs (get_value)
+
+Misc changes:
+	- GET combinator now sets fully_updated when the sub-combinator has no horizon (i.e. can never be acquired, so update will never give any result, hence fully updated)
+	- GET and ANYTIME when updated at horizon will count sub-combinator as already acquired, even before expiration (follows the paper more closely, acquisition is at last non-expired moment, not first expired moment)
+	- Replaced all assert_eq!(bool, x) with assert!(x)/assert!(!x) bc it's better
+	- Added get_concluded to contract API, used to check if the contract is done updating forever (checks if fully_updated or expired) - could be used for suicide in future
+
+Integration tests:
+	- GET and ANYTIME, using get_balance instead of get_value (better from integration test standpoint)
+	- get_concluded tests
+	- Extra should_panic tests for concluded contract, acquisition post-expiry
+
+JavaScript testing plan:
+	- Create scripts to initialise and run clean parity blockchainf
+	- Rust smart contract should be built and then deployed to the blockchain
+	- Javascript tests should initialize, setting up web3 with hard coded test accounts
+	- Unit tests should check that interfacing with contract works correctly (i.e. the API), no need to test all combinators as they're already tested, just interaction between js client and endpoint
+
+Testing implementation:
+	- Realised contract deployment was broken since the test migration, caused by the deletion of .cargo/config (done in attempt to make building work without the cdylib/lib issues), added the config back and converted the Uint8Array to a normal array and now works properly
+	- Reorganised repo, rust contract stuff moved to contract folder, js testing in new contract-js-test folder
+	- Added mocha for testing, and babel for ES6 imports
+	- contract-utils.mjs now holds contract management functions, deploy-contract.mjs now just calls into them, as will test.js
+	- Mocha tests first deploy contract (attempted twice in case of first push), then run tests
+	- Started with get_holder and get_counter_party, but weird results. get_holder is just returning Address::zero, even though the holder is not just zero in the constructor (have checked). For the counter_party it's the same, but the sender IS Address::zero in the constructor, which it shouldn't be.
+
+
+
+========== 27 Apr ==========
+
+Bad news, I misinterpreted the repo contract, which has a storage table stored in the struct of the contract instance. I assumed this implied that stuff stored on the struct (in rust's heap) stays around forever, but this is not the case. The storage table is simply updated while the contract is executing, and then emptied once the contract is exited. Anything not in the table at any given time will be in the contract's storage (pwasm_ethereum::write/read). This means I need to be able to serialize (and store in eth storage):
+	- All numbers associated with the contract (balance, addresses) - not a big deal
+	- Options (a bit fiddly but doable)
+	- The vectors representing OR choices (length then items, not tooo hard)
+	- The combinator structs (a massive pain)
+
+This also (annoyingly) means that there will be two separate serializations of the combinator contracts, one for the definition and one for the existing structs. I kind of hate this but I don't think there's any other way, the JS serialization shouldn't have knowledge of the RS minutiae. At least it should be easy to test
+
+Sadly, I think this will all take 3 days to a week, putting me about two weeks behind my intended deadline for the smart contract. At least I don't think the second part will take too long (front end client basically), should be doable within two weeks so shouldn't run out of time for the report.
+
+Will aim to have storage existing along with addresses/numbers stored by end of today, options/vectors and starting on combinators tomorrow, combinators by end of mon.
+
+NB: The contract struct is reinitialized every time a method is called, in the call/deploy functions. This is why everything is reset to 0 every time.
+
+Implementing storage:
+	- Implemented storage struct/methods, used same struct from the example repo contract
+	- Re-implementing i64 to/from [u8] (via u64), from old code, also implemented address to/from [u8]
+	- Have replaced holder, counter_party, holder_balance, counter_party_balance, and serialized_combinator fields with stored values, now passes js tests! So storage is working on the blockchain.
+	- Storage struct now uses Stores<T> trait, which can write/read a type T
+	- Implemented Stores for [u8; 32], i64, Address, and Vec<T> where Stores<T> (had to make a read_len and write_len so that vec lengths can always be read/written)
+
+To do still:
+	- Need to implement storage of bools, Option<T> and the combinator structs (will require serialization methods on the combinator structs themselves)
+	- Unit tests still pass (should add new ones though, specifically for key addition)
+
+REALISED A PROBLEM/SOLUTION:
+	- Vec<T> can be stored only if storage of T only uses one slot, e.g. Vec<Vec<T>> will break
+	- Same may be an issue with Option if we use 2 slots for that, Vec<Option<T>> will break
+	- Change write to return a key, representing the end of the array used, i.e. write(key, vec![1, 2, 3]) == key + 3, next write should be at key + 3 + 1
+
+
+
+========== 28 Apr ==========
+
+Implementing the fix for writing multiple slots in storage, then implementing bool and Option<T>, then starting on combinators.
+
+Another issue has reared its head. Having implemented returning end-addresses for read/writes, it's become obvious that these could change, for example if writing a vector and then re-writing it with an additional element the end address will be 1 element further into storage. If this is possible, then dynamically deciding addresses based on other addresses should never be done. There are a few options to fix this:
+	- Namespacing memory - we can use the last byte of the address as a "namespace" byte. Any dynamically-sized vectors can have their own memory namespace, and the add_to_key function can iterate only over the first 31 bytes of the addresses (so that namespace boundaries are never crossed). This is obviously quite restrictive, but it doesn't matter at all in the context of the specific smart contract.
+	- Matching IDs to memory, and dynamically organising it. This is the best design-wise, but it's a ton of work and not very efficient either. Involves keeping track of when memory for an item will overlap memory for another item, and moving the second item to fresh memory. This is a giant pain, and I almost definitely won't implement it, but it is basically the ideal solution.
+	- Enforcing type/size immutability on stored vectors. This means that if a vector has been written to storage, it cannot be re-written unless the new vector has the same size in memory (i.e. length and size of items are equal). This will prevent overlapping a vector with a vector stored after it, as it will never grow in storage. This requires adding checks and keeping track of the size/length of stored arrays, which could get difficult/inefficient with types like Vec<Vec<Option<Vec<T>>>> (not that we use anything more complicated than Vec<Option<T>>).
+
+Will probably go with the idea of namespacing memory for now, as it is very easy to implement and replace later.
+
+Stuff done:
+	- Namespacing memory (last byte is a namespace index)
+	- Reads/writes return the last read/written address (used in sequential read/writes, generally ignored outside of the Storage methods)
+	- Stores<Vec<T>> now actually works
+	- Implemented Stores<Option<T>> and Stores<bool>
+	- or_choices, obs_values, anytime_times now all stored in storage instead of members
+	- Added tests for storage of different types
+	- Using ext_reset in tests wipes out pwasm_ethereum::write/read storage (which is handily mocked as expected for testing usually), replaced all ext_reset calls with ext_update (which we should've been using anyway)
+
+
+Combinator serialization: Probably going to be recursive, each combinator serializes its sub-combinators and then itself, and returns the overall result. Serialization will look similar to existing serialization, except with extra data on each combinator (fully_acquired, acquisition_time).  Do we need to store indeces (or_index, obs_index, anytime_index)? In theory they can just be calculated during reconstruction (as deserialize_combinator works now), so no?
+
+Gripes:
+	- Effectively two deserialization functions for the same thing, kinda ugly
+
+Serialization/deserialization stuff done:
+	- Implemented enum for combinators (finally)
+	- Implemented serialization
+
+Still needed:
+	- Finish deserialization/storage of combinator structs, and (de)serialization testing
+	- More JS tests
+	- Methods for sending or choices, obs values, and anytime acquisition times (not straightforward as they're stored as options)
+	- Remove null combinator
+	- Think about using keys instead of passing around vectors through combinator functions
+
+
+
+========== 29 Apr ==========
+
+Finishing off deserialization of combinator structs, adding tests, removing null combinator.
+
+Changed Stores to StoresRef and Stores:
+	- StoresRef is like stores, but for passing by reference to write - prevents having to clone everything (vectors and arrays) a bunch, as we shouldn't be modifying anything passed in either way
+	- StoresRef<Vec<T>> will now only store vecs where Stores<T>, not StoresRef<T> (which is fine for us and makes everything easier and imo nicer)
+	- Stores<Option<T>> is used instead of StoresRef as it should be impossible to modify the option if it's immutable, but either way it doesn't matter if the option has to be cloned as the cost is practically 0 (unlike vectors or arrays) - also makes it easier to store Vec<Option<T>>, which we use extensively
+
+Implemented deserialization:
+	- As serialization is done on each combinator (necessary for encapsulation), deserialization should also be done on each combinator (also necessary for encapsulation)
+	- We want to initialise the combinators from a serialized vector, not initialise and then replace values, so this needs to be called before the combinator is instantiated - and thus it can't be a trait method, which requires a receiver (due to rust internal stuff)
+	- Instead, each combinator has their own deserialize method
+	- ContractCombinator has higher level deserialize, used when the type of combinator isn't known (e.g. at the first call, or sub-combinators)
+
+Testing:
+	- Serialization is tested by checking the serialized list matches the details, stored variables, and serialized sub-combinators directly
+	- Deserialization is tested by assuming serialization works (if it doesn't its tests will fail), so combinator.serialize() == deserialize(combinator.serialize()).serialize() is the assertion
+	- Tests for all combinators written
+
+Null combinator removed as no longer used (no combinator is stored before initialization, deserialization will just fail)
+
+
+Serialization and deserialization all seem to work, and all tests pass! Now need to add JS tests.
+
+JS tests:
+	- Changed from calling done() to returning promises, as calling done() was causing issues in nested transaction callbacks
+	- Added stake tests (which work)
+	- Added withdraw tests (which work)
+
+Seems that the ABI generation of pwasm doesn't set the payable attribute on the JSON ABI properly. If the attribute `"payable": true` is added to the json for the payable function (stake), then it works as expected. This is clearly a bug with pwasm, as when the payable attribute was added there were no changes made to the json generation (https://github.com/paritytech/pwasm-abi/commit/e14c00d8d0e096d4609ec9c0c2b5b9c4358dd02d). For now we'll work around it by adding the payable function manually when we test, although this requires disabling the ./build.sh line in test.sh.
+
+The two payment functions (stake and withdraw) work, so assuming the execution of the smart contract runs on the blockchain as expected (not necessarily a given but looking promising), the smart contract should be working fully on real blockchains!
+
+
+
+========== 30 Apr ==========
+
+After raising an issue on the GitHub for pwasm-abi, they fixed the issue with payable not being marked in the JSON (turns out my diagnosis was exactly correct). That was a quick fix, wowee. After changing the version of pwasm-abi to 2.2 and pwasm-abi-derive to 2.3 (and updating the Cargo.lock, which we can't change/auto-generate for weird reasons), it works perfectly.
+
+Tests:
+	- Implemented serialization for rest of combinators in JS (mostly direct, truncate and scale require the extra argument to be serialized but that's all)
+	- Added JS tests for API functions:
+		- get_concluded
+		- acquire
+		- update
+		- set_or_choice
+		- truncate (time passed into constructor correctly)
+		- scale (passing scale value and propose_obs_index)
+		- anytime (acquire_anytime_sub_contract)
+		- get_contract_definition
+
+Changes made to acquire_anytime_sub_contract:
+	- Previously no check that the anytime sub-contract is being acquired after the anytime contract until the contract is updated
+	- This throws an error when the contract is updated after being used incorrectly, but still allows the incorrect usage in the first place
+	- Need some way to throw when the anytime sub-combinator is acquired before the anytime is acquired
+	- Should keep track of whether the anytime is acquired in the anytime_acquisition_times, may use a tuple of (bool, Option<u32>) where (true, x) means that anytime has been acquired
+	- Requires storing (T, U) tuples, and updating anytime
+
+	- Stores<(T, U)> where Storage: Stores<T> + Stores<U> implemented
+	- anytime_acquisition_times changed from Vec<Option<u32>> to Vec<(bool, Option<u32>)> everywhere
+	- Tests/code updated
+	- acquire_anytime_sub_contract tests for anytime_acquisition_times[index].0, if false then panics
+	- ANYTIME combinator sets anytime_acquisition_times[self.anytime_index].0 to true when acquired, thus allowing acquire_anytime_sub_contract(index) to be called
+	- Test added for acquiring sub contract before acquiring parent (should panic)
+
+NB: acquire and acquire_anytime_sub_contract will now update the contract after acquiring. This makes a lot more sense (as we were basically calling update after every acquire, and acquire_anytime_sub_contract can't be called twice without updating in between), so that non-time-based contracts are concluded immediately after acquisition. Now only time-based contracts need updating.
+
+Added get_acquisition_times, get_or_choices, and get_obs_values - will be used in the client - and unit + JS tests.
+
+Moved js tests into contract directory.
+
+Added client directory with the basic layout set up. Will need to somehow share the contract-utils.mjs functions, but right now it's a bit difficult the way it's set up (and just in general apparently... tried converting to object with es5 exports, just times out after importing finally works). Will figure out later, probably just move js-test into the client and use the utils there, as it's kind of testing the utils.
+
+Next: Write the client!
+	- DSL contract writing
+	- DSL contract analysis
+	- Smart contract deployment
+	- Smart contract interaction
+	- Events
+
+
+
+========== 1 May ==========
+
+In all my fiddling with the structure, turns out I deleted the node modules/yarn.lock in the right combination to accidentally update web3 from beta.46 to beta.53. This actually broke the tests. Should figure out how to upgrade to beta.53, but in the meantime have changed the version to specifically beta.46 in the package.json for javascript tests.
+
+- Had meeting with susan/sophia
+- Changed observable system:
+	- Now relies on an arbiter, so scale obs 1 now looks like scale obs <addr> 1
+	- propose_obs_value replaced by set_obs_value
+	- obs_entries now stored, vector of tuples of each observable's arbiter and value
+	- get_obs_entries now returns the address (serialized as i64s) and the value
+	- implemented (de)serialization of addresses to/from i64s in rust
+	- implemented (de)serialization of addresses to/from BigInts in js
+
+Bug found: When calling withdraw, the contract will attempt to pay if the user's balance is positive, even if the contract doesn't have enough ether. Should add a check to ensure that the contract doesn't try to pay more than it has.
+Also add tests and update JS tests for new obs system.
+
+
+
+========== 2 May ==========
+
+Added/fixed tests for new observable system.
+Fixed issue with address calculation rounding based on already-accounted-for bytes, making address bytes off by 1
+Fixed issue with deserialized addresses needing padding with 0s
+
+Moving tests into client dir, starting client development
+
+NB: Can't get dynamic folder location working, so resource location in contract-utils.mjs is based on the directory you're calling from. This means that any code using contract-utils.mjs must be called from the client directory, or else it won't be able to find the resource files. test.sh and deploy.sh both account for this right now.
+
+Started client implementation:
+	- Landing page with metamask connection (not implemented) or manual blockchain connection/account unlocking (implemented)
+	- Main menu and page transitions
+	- Architecture and CSS styling
+
+
+
+========== 3 May ==========
+
+More work on the client, the contract composition page. Need:
+	- Explanation of how to write contracts
+	- Way to type contract (click/drag and drop?)
+	- Way to verify syntax (should be simple, basically just number of combinators)
+	- Way to input timestamps (datetime input)
+	- Way to set observable arbiters (variables? or just addresses)
+	- prefix or infix (and then convert to prefix)? prefix is easier to handle in every way, but less human readable. infix works better if contracts not typed by hand (in a simple system)
+
+Additions to client:
+	- SASS instead of CSS monolith
+	- Composition view with textarea, and help/time/submit buttons
+	- Modals!
+	- Modal for help in composition (basic, still needs proper explanation of DSL)
+	- Error messages
+	- Working datetime input in composition
+	- Better styling/colours (subjectively)
+	- Added a dropdown description component (not styled or used anywhere)
+
+To do: contract parsing, error reporting (basic), contract submission (returns contract address), evaluation??, then contract monitoring
+
+
+
+========== 4 May ==========
+
+More on the client:
+	- UI improvements
+	- Improve contract composition + submission
+	- Probably monitoring before evaluation
+
+Done:
+	- Changed ErrorMsg to Message, now has functionality of Description, just has different types, and only shows dropdown if it has children
+		- These two components had very similar functionality, uses, and styling, so just rolled into one
+		- Deleted description (which was unused anyway)
+		- Static function for rendering errors, should use similar functions for other types of messages
+	- Spinner!
+	- Connect account now shows error Messages and timeout after 10s (as network errors cannot be caught, so can only check for network error in web3 calls via timeout)
+	- Warning messages
+	- Use new error messages when connecting/logging in fails
+		- Detecting connection fails with timeout since sometimes returns uncatchable errors
+	- Contract verification in composition view
+		- Verifies addresses, combinators, unexpected termination, numbers (and their size), etc, returns error and stack
+	- Contract deployment view, verifies holder address
+
+Need to do next:
+	- Quantify contract.wasm and abi.json in a JS file, so that they can be imported without fs
+	- Automate this and add to build process
+	- Contract monitoring
+	- Contract evaluation
+
+
+
+========== 5 May ==========
+
+- client/resources/resources.mjs now exports the abi object and contract hex code
+- Deploy works (generally), and tests still work
+
+NB: The issue with the first deployment failing is worse than thought. It turns out that the first deployment by the specific user fails due to gas issues, and on the webpack client the first deployment always fails silently if it's not by the specific user (with password "user"). The silent failure doesn't seem to happen in the mocha tests, only on the webpack dev server. Once the specific user makes their failed deployment, every user can deploy contracts successfully. I don't know what's causing this issue, going to ignore for now as it's almost 100% blockchain-dependent (and so the issue will never affect anyone else). May ask on parity github? Should at least stop cleaning the chain when testing the client.
+
+NB ABOVE REDACTED: I'm just dumb, the anon function passed to ConnectAccount only took the web3 instance and not the address, so the address was never set throughout the web-app. This meant that the loadAndDeployContract function was being called with no sender address, and was using the specific user account as the default, failing silently unless the account had been unlocked. All accounts can deploy a transaction, but they may fail the first time due to the gas problem. This is so minor (fixed by retrying once, forever) that I'll ignore it, but I may remove the default argument (I don't think it's used anywhere) for loadAndDeployContract.
+
+- Success messages
+- Error/success messages for contract deployment
+	- Timeout to detect silent failure
+- Work on monitoring UI
+
+Monitoring thoughts:
+	- Contract instance stored in main, passed to/sent back up from relevant components
+	- Contract address passed in through modal
+		- contract-utils used to load from address
+		- check bytecode matches CODE_HEX (should work???) to check if financial smart contract
+	- Check if holder or counter-party match
+		- Also check obs-arbiters?
+	- Monitoring functionality:
+		- Balance
+		- Holder/counter-party
+		- Or choices (view + set)
+		- Obs arbiters and values (view + set)
+		- Anytime acquisition times (view + set)
+		- Evaluation?? (not yet though)
+		- Acquisition
+		- Auto-updating
+		- Events?? (may be a bit pointless since not many interactions and quite a bit of work, could just reload on new transactions since getters are pure)
+
+- Checking if a contract is a financial contract
+	- Seems difficult (impossible??) to do without just calling methods, maybe just call the required getters for the UI and if any fail then report the error
+- Main UI framework for monitoring component implemented
+- Loading contract implemented
+- Getting holder and counter-party implemented, getting other details should work the same way
+
+NB: Also added check for funds before withdrawal in smart contract.
+
+
+
+========== 8 May ==========
+
+Working on the monitoring page
+
+- Made getHolder/getCounterParty functions in contract-utils, instead of just calling from monitoring.jsx
+	- contract-utils should probably have all the API-related functionality in one place
+	- Error handling is now a try catch, where any error is handled by stopping and treating the contract as an unrelated contract
+- Extracted dropdown from message, can now make "plain" dropdown containers
+	- Styling of message applies to children as well, to affect the arrow/text colour of the dropdowns
+- Display concluded, or-choices, obs-values, and acquisition times in contract monitoring
+
+To do next:
+	- Allow setting of or-choices and obs-values via monitoring (easy)
+	- Allow acquisition of contract/sub-contract via monitoring (easy ish)
+	- Deserialization of contract definition in contract-utils, to display contract definition via monitoring (a bit harder)
+	- Evaluation (many days)
+	- Tests (one day at the end)
+
+
+
+========== 9 May ==========
+
+More work on the monitoring page.
+
+- Extracting load-contract controls into new component, doing the same with or-choice/obs-value/anytime-acquisition/stake/payment controls in future, to clean up state/functions of monitoring.jsx
+- Setting of or-choices and obs-values
+	- or-choices uses radio buttons
+	- obs-values uses inputs, only allows setting values of which the logged-in user is the arbiter
+	- both require slightly complicated stuff to handle reloading contracts, and prop timing (since initial props likely wont have the contract loaded, and contract may be reloaded).
+	- very fiddly to set up the radio buttons correctly
+
+To do:
+	- Set auto refresh on initContractState
+	- Check set_or_choices function, shouldn't be able to set after conclusion
+	- Acquire and acquire anytime
+	- Stake and withdraw
+	- Deserialization of contract definition / displaying
+	- Balance (and allow both users to see each others' balance)
+	- Tests
+	- Evaluation
+	- MetaMask
+
+
+
+========== 10 May ==========
+
+More work on monitoring
+	- Set auto-reload of contract state on monitoring view (calls are pure so free)
+	- Moved main acquisition time to basic details, from acquisition times dropdown (now only shows sub-contract acquisition times)
+	- Acquire/update buttons/functions
+	- Acquire sub-contract view (detects if potentially acquirable anytime sub-contracts exist, based on acquisitionTimes
+	- Added stake and withdraw functionality to monitoring
+
+Should the contract have a time last updated function? The update function requires gas, so should be manually invoked only. No way to know if the contract is up to date right now.
+
+Also should have a parameter in constructor to prevent paying gas when withdrawing (often won't be needed unless one party is a contract on a non-trusted blockchain).
+Still need deserialization of contract definition/displaying, tests, evaluation, metamask. Could use some tests for withdraw in lib.rs.
+
+
+
+========== 11 May ==========
+
+Finished monitoring (basically):
+	- Implemented contract deserialization on JS side
+	- Deserialized contract now displayed on the monitoring page
+
+Metamask secret phrase:
+essence enter security afford another moment castle network enhance acquire protect cruise
+
+Have also "implemented" metamask support - it "works", but still seems that it won't work with parity as it never matches the expected and actual states (JSON-RPC error 32603). Still, should work on a real blockchain or more standard test blockchain.
+
+Still need:
+	- JS tests
+	- Some extra rust tests for withdrawing (esp as it now panics)
+	- Evaluation algorithm
+	- Time-last-updated kept track of on contract? (should be easy)
+	- Constructor param for no gas on contract (should be easy)
+	- Report
+
+
+
+========== 13 May ==========
+
+Report work!!
+	- Gone through report fixing bracketing and semicolon usage
+	- Removed first-person references (except mayybe some in plan and evaluation, as it actually makes sense there)
+	- Added todo notes about missing background research (mainly pwasm and analysis tool stuff)
+	- Todo notes about stuff that should be cut or moved from background research
+	- Todo notes about stuff that isn't relevant or true anymore
+	- Todo notes about potential places for examples
+	- Minor grammar/wording improvements
+
+
+
+========== 15 May ==========
+
+Done today
+	- Helped Noah-Vincenz (a lot) with his blockchain/deployment woes, implemented a minimal version of the wasm contract with build/deploy functionality
+	- added margin to bottom of monitoring page
+	- Re-read the contracts.pdf paper:
+		- Probably don't need lattice/numerical modelling, bc will leave exchange rate/interest rate/etc evaluation up to the user (these are SUPER hard problems which SPJ barely goes-into)
+		- Likely can use some recursive evaluation function
+		- Evaluation of an expired contract may not be able to return 0, but instead something like undefined (unless you're at the top level, in which case undefined should be interpreted as 0)
+		- Memoisation/some kind of dynamic-programming to prevent re-evaluating sub-contracts would be nice, and very good for the report, but may be difficult (hopefully not too hard in our simpler evaluation compared to SPJ, even just using a hash-map would probably be ok)
+		- Some function for contract -> horizon would be good, maybe also memo-ised (can go bottom-up in that case)
+		- Probably good to calculate all "relevant" time slices, and allow the user to choose between them for acquisition times (i.e. if 1-2 and 2-3 have the same value, then 1-3 is the time-slice we care about)
+		- OR combinators should evaluate to their maximum sub-combinator value (or the non-expired child if one has expired)
+		- GET combinators can just evaluate to the value at the horizon, since we don't care about value process modelling
+		- ANYTIME will be a bit more complicated, worth thinking about - should display time slice selection for ANYTIME acquisition as well, but how to UI this? etc
+		- All other combinators are straightforward
+		- Represent as string or array during evaluation? Both have array, but the strings differ slightly, but in detectable ways so can transform? String may be more readable and hash-map-able?
+
+
+
+========== 16 May ==========
+
+Starting evaluation algorithm:
+	- Implemented getHorizon/_getHorizon for all combinators, and written tests
+		- Thought about memoisation, but with memoisation we need to find the "functional" part of the sub-contract (removing any trailing combinators) and then look this up. This is barely better than just calculating it from scratch if it hits (same order of magnitude), but goes from linear to quadratic in the worst case (missing every element). May be interesting to talk about in report though.
+		- If we don't trim trailing combinators, we don't get any benefits from evaluating one contract (except that the top level horizon is saved, which we could do i guess) since no sub-combinator will have the same trailing set of combinators as any other sub-combinator, as at least their lengths will differ
+		- This system would be helpful though if analysing lots of different contracts while keeping evaluator in memory. This is javascript in the browser though, so it's unlikely to be kept in memory no matter what, and it's also not really the intended use case.
+		- Could benefit (O(n) -> O(1)) from just storing the top-level horizon, so will do that.
+
+	- Reorganized test suite - tests for different files now in different test files
+	- Time slices and tests
+		- Good stuff for the report
+		- New time slices are only introduced by truncate, and time slice sets are merged by or, and, and then (then is more special though)
+		- Each time slice represents a period of time in which acquiring the contract will have a defined value
+		- In other words, acquiring a contract during a time slice will result in the same (FINAL) value as acquiring it anywhere else in the same time slice
+		- Other time slices may or may not have the same value
+		- If two time slices are adjacent, and have the same value, it should be possible (I think) to merge them (since that's the whole point of time slices, differentiating values over time)
+		- To view the (FINAL) value of a contract, you must set the time slice within which you plan to acquire it, or view them all
+		- Anytime combinators throw a bit of a spanner in the works, as they must also have a set of time-slices and a time-slice given
+		- Currently, only the top level set of time slices is kept track of. May make sense to keep track of anytime time slice sets, requiring us to map them by index, so the _processCombinators method will need to recurse by incrementing an index instead of slicing the array. This is obviously possible as it's how we do it elsewhere, so it should be fine
+		- May want to calculate values of all time slices at the start. This would enable fancy stuff like graphs, although with anytime combinators this gets difficult. Also allows us to merge time-slices before displaying them, which is nice for the user.
+
+
+
+========== 17 May ==========
+
+Continuing Evaluator class:
+	- _processCombinators now uses index instead of slicing combinator array for recursion
+	- _processCombinators now uses this.combinators[i + x] instead of passing in combinators, which should always be correct
+	- TimeSlices are now cloned when given away by evaluator, or used in anytimeTimeSlices
+	- GET now cuts off head of time slices (as acquiring before get truncate x c is the same as acquiring at x)
+	- ANYTIME time slices may be cut-able by GET as well
+		- acquiring GET TRUNCATE X ANYTIME TRUNCATE Y C with Y > X has no difference between 0 and X (although the anytime contract doesn't know this in its scope..)
+		- Maybe just keep track of higher level time slice during traversal, and only choose anytime time slices which are also in that list
+
+Note: currently NOT done by time-slice algorithm:
+	- OR combinators where the later-expiring branch is always optimal should only take the time slices of the better choice, since the other branch will never be chosen (requires value calculation)
+
+Thoughts on evaluation:
+	- Only unique values are those at the time of each time slice
+		- e.g. for [1, 2, 3], need to evaluate at times 1, 2, and 3 (as well as after 3), all other times will give one of those 3 values
+	- When evaluating, always assume most valuable branch is picked by the owner
+		- Most valuable or-choice
+		- Most valuable ANYTIME acquisition time-slice
+	- For scale values, we can't estimate their value (will leave that to the user)
+		- instead show the maximal concrete value (if one exists) and all options based on scaling
+		- Could show just maximal options based on scaling (e.g. "2 * obs_1 * one" over "obs_1 * one") - don't know if scale will be negative though
+		- Could allow user to estimate obs values, but if they change significantly with time then this will be hard as we don't know what time we'll be evaluating for
+		- If we can get an observable value at each viable time slice in the contract, then we can find the maximal value. This may be complicated though as lots of obs values to input.
+		- Maybe allow one option for evaluating a path that the user selects, one option for evaluating optimal path based on estimated obs values.
+		- In the second case, maybe want to save time-slices at each obs-value too? So we know what times are needed, instead of having to look up the tree for the nearest anytime/top-level
+	- When evaluating anytime, only allow selecting time-slices at or after the time slice being used 1 level up
+		- e.g. for get truncate x anytime truncate y c, can use any time slice between x and y, but not before x (none will exist after y at that level)
+
+
+Idea for evaluation:
+	- One option is to walk down the tree allowing the user to select options, a "choose-your-financial-adventure" style, with UI showing new options after each choice
+	- Another option is to allow the user to input observable value estimates at each time slice (relevant to the scale combinators), and then calculate the optimal value
+		- Would be ideal if could allow users to input time-based value equations or something, but this is suuuper complicated and hard to do safely so not gonna be possible (future work??)
+
+The first one is relatively simple, only requiring choices for acquisition/anytime-acquisition, or-choices, and scale-values (although this could be optional even), so will work on that first.
+
+implementing step-through eval:
+	- index to keep track of current location in combinator evaluation
+	- stepping-through is just done to make choices
+	- evaluation is done after all choices are made, recursively
+	- use queue to keep track of values which are set during stepping (unshift while choosing, pop while evaluating)
+	- check if more steps exist after setting value of current step (e.g. check horizon of next sub-contract)
+	- Could also prevent choosing expired sub-contracts (of or), this would require either keeping track of horizons or working it out though, keeping track could be possible though?
+	- Think I need to keep track of horizons anyway for evaluating GET, as won't know what time to pass down without calculating it or storing it
+	- Now storing horizons in map that gets value of next stored key
+		- i.e. scale x truncate y one, looking up horizon of scale will find horizon of truncate y and return that
+		- Requires less storage work, not so important for horizons buuuuuut...
+	- Also (will be) storing map of each combinator's index to the tail index following the end of their contract
+		- Using the same data structure as the one for horizons, only requires storing things at one/zero and and/or/then (with a lookup)
+		- Completely removes the need to re-walk the tree to find contract tails
+		- Any operation where you need to know the end of the contract goes from O(n-1) at worst to O(list lookup) (arguably there's a call to keys.sort() so not constant but still good)
+
+NB: When working on the evaluation-controls.jsx component, setContract etc will need to be called on componentDidMount(), NOT on constructor(), since the component will only be mounted/unmounted, not re-initialised.
+
+TODO:
+	- Implement contract tail map
+	- Use contract tail map instead of _getEndOfContract
+	- Probably shouldn't return tailIndex in ProcessResult anymore either
+	- Finish implementing getStepThroughEvaluation
+	- Tests and UI for all of this
+
+
+
+========== 18 May ==========
+
+- Implemented the combinator tail index map, mapping combinator indexes to the indexes just after end of their contract
+- Fixed the NextMap (was finding the first smaller key, not first larger key, i.e. completely wrong)
+
+Currently, the step-through option stuff is pretty wrong:
+	- OR-choices - we just skip 1st child if we choose second, we never prevent going through 1st then second
+	- AND-choices - we just go through the whole thing (kind of not completely wrong?)
+	- THEN - not handled at all
+	- ANYTIME - shouldn't stop evaluation at an expired anytime, what if e.g. AND ANYTIME TRUNCATE X ONE ANYTIME TRUNCATE Y ONE - if x is expired but y isn't, we still need to set anytime 2's time
+
+How to model this: Stack
+	- If reaching AND while iterating over combinators to find options, say there's an AND at index i
+	- When the end of the sub-contract is reached, if popping the AND stack gives an index, go back to that point and move on to AND's second child
+	- For reaching the end of an OR/THEN sub-contract, just checking if we reached the end of the sub-contract should be enough
+	- For ANYTIME we treat expiration as being at the end of the sub-contract, as the value will be 0 no matter what follows
+	- Identity (ONE/ZERO) combinators can be treated as the end of the sub-contract
+	- Unary combinators can be skipped over (although TRUNCATE could also be checked for expiration)
+	- Will also need to store the current time in the AND stack, and probably should store it somewhere explicitly in a variable
+		- GET needs to change time to horizon
+
+Implemented:
+	- Now keeping track of current time, and AND combinators we step past (to go on to their second child) (added to resetState and resetOption)
+	- _goToNextStep implemented
+		- Checks each combinator, if it's AND then add and revisit entry to stack
+		- If THEN, skip first child if applicable
+		- if ONE, ZERO, or horizon has passed, check if the contract is over or if we need to revisit an AND entry
+		- If OR or ANYTIME, check if they need any options
+			- If one of OR's children expired, then choose the other automatically
+			- If ANYTIME has no time-slice options (i.e. it makes no difference), pass the current step-through time or the one slice
+			- If top-level acquisition time has no slices, make the choice for the user as 0, or if one slice then use that
+
+Notes about evaluation (one payment vs many payments at specific times):
+	- Probably easy-ish to note what time each payment will be received
+	- In general, each payment will always be in the time slice the one/zero is acquired in
+	- If the one/zero has a GET parent combinator, the CLOSEST parent will be the one deciding the time (as higher GETs only set the lower GETs' acquisition times, not the ONE/ZERO's times)
+	- This means that we can attach an acquisition time to the ONE/ZEROs, and note if it has been passed through a GET or NOT
+		- If passed through a GET, the acquisition time will be exact
+		- If not passed through a GET, the acquisition time will be in a time slice (of the closest ANYTIME parent, or top-level)
+	- This means that it is possible, albeit a little fiddly, to keep track of what time payments will be received - this could be super useful however, may be worth discussing
+
+TODO:
+	- Actually seems to work in terms of setting options
+	- Need tests for evaluation
+	- UI
+	- Fix AND bc it's not passing tests.
+
+
+
+========== 19 May ==========
+
+Starting UI for evaluation (yes it's not passing tests fully but need to show off for meeting in two days)
+	- Previous options displayed, with delete buttons
+	- Evaluate button
+	- Message for errors or success
+	- Current option selection + input
+	- Sets contract on mounting/componentDidUpdate
+	- Evaluation function
+
+Todo:
+	- Test
+	- Style
+	- Put in composition/monitoring views
+	- Wire up evaluator with Main (to keep state)
+	- Finish evaluator tests too
+
+
+
+========== 20 May ==========
+
+Styling/fixing UI for evaluation and evaluator:
+	- Added much better styling for UI
+	- Added info message for no-input contracts
+	- .mjs files now handled by babel loader (seems to be required)
+		- Had to remove calls to BigInt, replaced with web3.utils.toBN() (thankfully this was simple, deserialization/serialization of addresses and i64s still work)
+	- Fixed option setting
+	- Fixed AND evaluation (was returning result of subRes0.add(), which is undefined, instead of calling and then returning)
+	- Added atom indicator to UI
+	- Fixed delete function passing wrong parameter in button (now binds parameter and receiver)
+	- Now save or-index and anytime-index in StepThroughOptions/StepThroughValue so they can be displayed alongside the option in the UI
+	- All seems to work!
+	- Evaluator tests (unit-style, not integration, although tested some stuff manually too)
+
+ToDo:
+	- Tests for contract-utils
+	- Add gas-free param for smart contract
+	- Remove get_value from smart contract
+	- Write report
+
+
+
+========== 23 May ==========
+
+Making final smart contract changes:
+	- Adding gas-free parameter
+	- Store last-updated time
+	- Moving storage to new file
+	- Removing get_value and tests
+	- Double check or-choice and obs-value setting restrictions
+	- Adding names for observables (and to contract-utils)
+
+
+Implemented:
+	- No gas contracts:
+		- use_gas constructor parameter (if true, acts the same as before, if false then doesn't spend anything from withdrawals as gas)
+		- Updated old rust tests
+		- Added new rust tests
+		- Updated JS functionality (loadAndDeployContract(), deploy(), etc)
+		- Updated JS tests
+		- Added new JS tests
+		- Added no-gas option in deployment UI and styled/tested
+
+	- Storing the last-updated time on the contract:
+		- last_updated stored and retrievable via function
+		- Function tested in RS
+		- Function implemented in JS
+		- Update UI of monitoring
+
+	- Moving storage to new file
+		- Moved storage and tests to storage.rs
+		- Re-export storage as module from lib.rs
+		- Tested with RS and JS tests, all pass
+
+	- Removed get_value and associated tests
+		- Removed from trait and combinators
+		- Removed get_value tests in combinator modules (they already have tests for acquire/update, so no need for new tests)
+		- Replaced get_value checks in integration tests with acquire() -> get_balance()
+		- Removed extraneous update()s after acquire()s
+
+	- Double-check OR-choice and obs-value setting restrictions
+		- If acquired and or-choice set, should NOT be able to reset it
+		- Right now, we allow resetting no matter what. This is wrong as it allows you to acquire with one or-choice, reset, then update
+		- This doesn't get you the other choice's funds, as it will never be acquired (and you can't re-acquire the contract), but it doesn't let you get the funds of the first choice either
+		- Obs-value is less of an issue, but changing it mid-contract shouldn't really be allowed (as the payout occurs over time), so should also not allow changing after acquisition
+		- As it's less work, for now will not allow changing of obs-values/or-choices if they've already been set (ever), ignoring acquisition time
+		- Updated rust code to check if defined before allowing setting these values, panics if defined
+		- Updated JS UI to only show undefined or-choices/obs-values for setting, and disable the button if all are defined
+
+Todo:
+	- Add names for observables
+	- contract-utils-tests
+	- Add evaluation modal to monitoring view
+
+
+
+========== 24 May ==========
+
+Adding names for observables (plan):
+	- Input name (instead of obs) in scale (e.g. "scale obs_name arb_addr")
+	- JS converts name to array of numbers (length followed by numbers)
+	- Contract takes name as slice of serialized contract
+	- Contract writes each of these names to storage
+	- Contract reads from storage and adds to serialized contract where appropriate
+	- JS takes from serialized contract and uses in deserialization/monitoring UI
+	- Contract always takes obs_index as before
+	- JS UI converts between names and obs_index
+
+Implementation Smart Contract:
+	- Added ObsName struct in Storage module
+	- ObsName implementation for Stores
+	- (T, U, V) where T + U + V implementation for Stores (to store a tuple with 3 elements)
+	- Clone implementation derived for ObsName (needed for some reason)
+	- obs_entries array now typed as Vec<(Address, Option<i64>, ObsName)>
+	- get_obs_entries, get_obs_values, set_obs_entry, deserialize_remote_combinator, and tests all updated
+	- Should we have a set_obs_entry_by_name/get_obs_index(name)/etc??
+		- I think no, because:
+		- More work
+		- Encourages command-line usage (which we shouldn't allow basically)
+		- Obs-index can be obtained from get_obs_entries, or just by working it out
+		- Would need some validation on the smart-contract that no two observables have the same name (MASSIVE pain)
+
+Implementation JS UI:
+	- Added name member to ObservableEntry class
+	- Added serializeName and deserializeName functions (name <-> [N, char0, char1..., charN])
+	- Added name serialization/deserialization to contract serialization/deserialization and obsEntry deserialization
+	- Updated tests
+	- Updated evaluator and tests
+	- Updated monitoring
+		- Observables with same name and arbiter are treated the same (only one shown, both set to the given value upon setting, etc)
+		- Observable names are shown/selected from, instead of indices
+
+Adding tests:
+	- Tests added (all failing)
+	- Added util function tests
+	- Added serialization/deserialization tests
+	- Added verification tests
+
+Todo:
+	- Add API tests for contract-utils
+	- Add evaluation modal to monitoring view
+	- Test MetaMask with any blockchain (no deployment etc, just obtaining credentials)
+
+
+
+========== 25 May ==========
+
+Adding evaluation modal to monitoring view:
+	- Added button, with disabled modifier
+	- Modal with state
+	- Resets evaluator state on button press
+
+
+Modifications to evaluator:
+	- Added handling of ["<date", "time>"] time representation to step-through evaluation (was handled in _process(), not _stepThroughEvaluate())
+	- Acquisition of contract after expiration is allowed
+		- Always allow selection of top-level acquisition time (not auto-selected)
+		- After last time-slice, another option is added for the past-horizon slice (or the current time if no slices exist)
+		- Will always have at least 1 option, even with 1 option allow user to select/confirm (better for demo-ing)
+
+	- Acquisition of things in the past not allowed
+		- acquisition sets current time to selected time slice, and you can't select acquisition times (for anytime) before the selected time slice
+		- This means that only the top-level acquisition time needs adjusting
+		- As done with acquisition times, cut off any elements in the list before the current time
+		- Can do this now as we'll add the current time to the list if the contract has expired, so no chance of having 0 options
+
+	- Added checks in evaluator-controls for whether options have been set (was trying to render options after getting a contract in composition, but before setting options in monitoring)
+
+	- Fixed evaluator tests (added explicit acqusition time selection where needed)
+
+Modified test scripts (run-client.sh, test.sh) so that a clean blockchain is run upon executing (can both be disabled by passing "-nc" as an option)
+
+Added tests for contract-utils contract interactions
+	- Tests mainly just check that all of the functions interact with a live contract correctly, with expected results on the contract
+
+
+
+========== 26 May ==========
+
+Working on the report (evaluation)
+
+TODO:
+	- Setup final build, and bundle with a mini-server (python etc), to run the client standalone
+	- Test metamask with other blockchains
+
+Found new bug, apparently if the combinator contract has 26-29 (range may not be exact?) bytes in the serialized definition, then get_combinator_contract() will fail due to a wasm runtime error.
+This doesn't happen when testing with pwasm_test, but does happen when testing by interacting with a deployed blockchain, suggesting that the issue is with parity. Also it makes no sense so i don't see how it could be my fault.
+
+Have run 240 test contracts ("one one one..."), each with a different number of bytes (1-240) in the contract. The contracts with 27-29 bytes failed with the wasm runtime error, all others succeeded. This suggests that the error can be worked around by just adding 3 extra bytes to the end of the contract (can be anything as it'll be extraneous) when deploying if it has 27-29 bytes. To be doubly sure, we'll add enough bytes to have at least 32 from 25.
+
+Problem doesn't just happen when writing contract to storage, but any value with 27-29 bytes seems to fail when being read from storage, including observable names.
+Also, seems like Stores is a bit busted. Stores<Option<T>> only takes 1 slot when value is None, but more than 1 when value is Some(v). This means that it grows in storage from taking 1 slot to 2+, so it probably overwrites whatever's next to it (will now be the length of the ObsName, which is important).
+
+Changes for storage overwriting other items:
+	- Noted that objects stored by Stores<T> should never change in size
+	- Option<T> now only takes Stores<T> + StoresOne<T>, where the StoresOne trait is implemented for i64, u32, and bool (to show that they are stored in one storage slot)
+	- Option<T> now always "takes up" 2 slots, even when storing None (to prevent storing None in 1 slot, then growing to 2 and overwriting a slot)
+
+Plan for debugging the weird issue with 28-30 byte arrays being stored:
+	- Write a minimal smart contract (use that github repo)
+	- Implement a function to store 30 bytes of stuff
+	- See if it bugs, if so then it's a parity issue and not me (i think this is the case), if not then cry
+
+
+
+========== 27 May ==========
+
+Writing the user manual and survey
+
+TODO:
+	- Should allow acquisition times to be selected in the past for evaluation of contract in the monitoring view, to evaluate contracts which have already been acquired.
+	- Display acquisition times as an inclusive range (options[i - 1] + 1 to options[i]), not just a single time (it's easy but much more obvious)
+	- Maybe show automatic acquisition times in prevvalues, and allow deleting/reselecting of it? (shouldn't be too hard, remove the automatic member, and don't go to next combinator in delete (which may already be the case))
+	- Evaluation by time-slice? (e.g. (obs_1 * 1 at 12:00) + (obs_2 * 1 at 16:00) Wei), would make estimating value of observables significantly easier
+	- Could display "current" evaluation time in prevvalues/current option
+
+
+
+========== 28 May ==========
+
+Was going to go to the project fair for feedback, but left as it was lifeless and also i dont think the "numbers from random people" approach to evaluation is really worthwhile, discussing with vaguely knowledgeable individuals is probably more useful (if less quantitative).
+
+Today:
+	- Show automatic acquisition times
+	- Show acquisition times as range of times
+	- Evaluation by time slice
+	- Input date by shorthand in composition
+	- Sort out prod build
+
+Implemented:
+	- Automatic acquisition times shown and deletable/resettable (not that there's much point to doing that)
+		- Just removing the setAutomatically field of StepThroughValue, and the filter on the field in getPrevValues
+
+	- Input date by shorthand in composition
+		- Evaluator, make < [date] > detection more rigorous (detects number of elements between brackets, not relying on 2 elements only)
+		- Serializer in JS will detect pretty date in angle-brackets and convert it to a UNIX Epoch timestamp
+		- Use moment.js to ensure
+
+	- Found bug with anytime
+		- If anytime combinator has no horizon, does not allow acquisition after last time slice (e.g. anytime then truncate <01/01/2020 00:00:00> zero one, can never acquire one)
+		- Added undefined to TimeSlices to represent an infinite slice, e.g. truncate <01/01/2020 00:00:00> zero one has [01/01/2020 00:00:00, undefined] as its time slices.
+
+	- Show range of times for acquisition times, show current eval time on prev/current value/option, value by time slice
+		- Implementing a specific time-range class, which has a start and an end time (where applicable)
+		- Updated time-slices and evaluator to use time-ranges
+		- Updated time-slices tests
+		- Need to update evaluator tests and front-end (mainly just displaying the time-ranges)
+
+
+TODO:
+	- Finish updating times to time-ranges (evaluation tests and front-end)
+	- Update user manual screenshots (composition shorthand date)
+	- evaluation value by time slice
+
+
+
+
+========== 29 May ==========
+
+Finishing the time-range implementation of time-slices:
+	- Updated rest of evaluator to make everything use time-range
+	- Renamed TimeRange to TimeSlice
+	- Updated evaluate-controls
+
+Evaluation value by time slice:
+	- Observable values, need to know what time they are acquired (the scale combinator) to know what time to estimate
+	- Scale values, don't need to know what time they are acquired as they don't change over time, and only multiply the one combinator
+	- One combinators, need to know when acquired bc that will be the time the payment actually occurs (or occurs retroactively after this time)
+
+Implementing:
+	- Moved StepThroughEvaluationResult into own file
+	- Refactored StepThroughEvaluationResult to do a recursive stack-based evaluation (much cleaner and better designed), wei output string is slightly different (better order, different (correct) bracketing)
+	- Adding time-slice info to step through evaluation result
+	- Updated evaluate-controls
+
+Allow setting of acquisition times in past on monitoring evaluate screen
+	- Added includePast prop to evaluate-controls, and includePast param to getNextStepThroughOptions
+
+Fixed timezone issue, now allow specification of timezone (parser tries with and without), all times are represented as UTC (including passed-in times by default).
+
+TODO:
+	- Update user manual
+	- Figure out build stuff
+
+
+
+
+========== 30 May ==========
+
+Implemented basic build stuff:
+	- Separate webpack configs for dev and prod (removing dev stuff from prod)
+	- Move web3 to prod dependency from dev (as we use it in the browser by importing)
+	- Changed all scripts to cd into script's containing dir, obtained programmatically
+		- All cds are undone using cd - in each script, so that scripts can call cd current-dir...cd - around calls to other scripts without messing up the undo stack
+	- Very basic build implemented, just a script that runs a python simple server with the given prod files and opens chrome to the required address
+
+Updating user manual with new screenshots/functionality (time/date related mainly)
+
+Renamed "Select Time" to "Insert UNIX Time"
+
+Updated readme.md
+
+
+
+
+========== 1st Jun ==========
+
+Wrote a bunch of the report over the last two days.
+
+Thoughts about storage:
+
+changing storage to give back size of each type in storage:
++ would allow constant-time writing/reading for single array elements, which is good for the setter functions
++ more explicit (as opposed to returning last-used key)
++ don't need multiple stores implementations
++ actually requires stores & storesref, whereas currently we dont need both...
+- more work
+- more methods need implementing
+
+Either change it to implement GetSize or something and individual vec elem update/read, or write in evaluation about how it would be good.
+
+If GetSize isnt implemented, at least rename from StoresRef, and probably use Stores<[u8; 32]> instead of StoresRef
+
+If implemented, instead of looking up vectors before combinator calls, should just read/write individual elements within the calls, and not pass vectors around. This is O(n), but n is number of relevant combinators (e.g. anytime combinators for acquisition times)
+
+
+no test for get_use_gas or get_concluded?
+
+
+
+
+========== 2nd Jun ==========
+
+or combinator's acquire/update methods are wrong? seems like if a choice is made but then the sub-combinator expires, will switch to the other one. Should do:
+	- in acquire, if either sub-combinator is expired, choose the other
+	- in acquire, if both sub-combinators are non-expired, choose based on or choice
+	- if no or choice or expired sub-combinator, wait until or choice and do not acquire anything
+	- in update, if either sub-combinator acquired then update that
+	- if no sub-combinator acquired but or-choice given, acquire that combinator (at old acquisition time) and update
+or combinator changed to implement this behaviour, new test written (was failing as expected but now passes)
+
+Changed get_combinator if statement to match, slightly cleaner/clearer/less words
+
+
+
+
+========== 4th Jun ==========
+
+Meeting questions:
+	- cite technologies being mentioned? (like react, web3)
+	- changes to storage
+	- UML/other ABI representation diagram? Or give full ABI in appendix non-diagrammed?
+
+Meeting notes:
+	- conclusion with what you've done, what extra can be done (future work), and what you would do differently
+	- use "serialise" everywhere
+	- evaluation conclusions and whole chapter conclusions
+	- block diagrams for modules/equiv., clearly show which parts are external (not by me)
+	- footnotes for links and versions of used technologies (like React)
+	- ABI in appendix
+
+Storage changes:
+	- Renamed stores/storesref to StoresFixed and StoresVariable, added StoresFixedVec
+	- Can't add size() method to StoresFixed as bug(?) with explicitly calling on trait with generic type (says bound isnt met despite the same bound in where clause)
+	- Instead add StorageSized trait to every storable type
+	- ObsName can't be treated as StoresFixed, as we can't jump to a location in a vector with ObsNames as they have differing lengths
+	- Instead have StoresFixedVec, which stores a vector of fixed-size elements (with set/get/push/length methods), and StoresVariable, which stores an object of variable size
+	- StoresFixedVec<T> where Storage: StoresFixed<T>
+	- StoresVariable<T> for Vec<T> with Storage: StoresVariable<T>, and StoresVariable<ObsName>
+	- replaced read_ref/write_ref with read_vec/write_vec or read_var/write_var throughout contract
+	- instead of passing down arrays to update/acquire, the relevant classes import their array keys and get/set values - only encountered and changed values need to be read/written
+	- obs_values and obs_names stored separately
+		- not a big deal as contract never touches obs_names except to return the obs_entries, and it already has to load the whole array(s) either way
+	- added unit tests for scale with observables (missing for some reason???)
+	- all tests pass with minimal work (although actually implementing/getting to compile was a giant pain...)
+
+
+
+
+========== 5th Jun ==========
+
+More storage changes:
+	- Instead of "write/read"_"len/some", now require StoresFixed<i64/bool> in implementations that used them
+	- Finalllyyyyy figured out a way to cast the storage calls that doesnt complain, with <Storage as StoresFixed<T>>::method(self)
+		- can thus use <Storage as StoresFixed<i64/bool>>::write/read, instead of write/read_len/some
+		- CAN implement StoresFixed<T>::size() and call correctly, so no more StorageSized
+	- Updated everything to use this, much much nicer (although ugly casting everywhere) and all tests pass
+	- Apparently these casts don't get checked at compile time, so make sure it's in the where clause if you wanna cast
+	- Have removed all T: StorageSized requirements
+	- Despite its generic nature, can NOT make StoresFixedVec<T> a default implementation as it complains that Self: Sized is not fulfilled (I'm pretty sure this is never fulfilled either way but oh well)
+
+Besides that, fixing up report (updating financial smart contract section for new storage design, and editing/cutting)
+	- Re-written Storage section and testing/eval
+	- Re-written combinator implementation section to cut out repetition
+	- Added to evaluations somewhat
+	- Added eval conclusions and remarks sections
+	- Cut out some unimportant parts in smart contract abi implementation
+
+
+
+
+
+========== 10th Jun ==========
+
+Questions for Meeting:
+	- Structure
+		- good to have DSL explanation first, but then financial smart contract (general) second, then combinator implementation third - how to do this?
+		- Could have DSL explanation in its own smaller chapter, then the following two chapters?
+		- Could have DSL explanation as part of financial smart contract chapter?
+		- Could put all combinators stuff first (not a big fan as missing context on financial smart contracts)	
+		- Need to figure out order of the following (could all be a chapter or could be joined together):
+			- DSL definition
+			- Smart contract representation
+			- Combinator representation
+			- Storage (kind of goes with smart contract representation)
+
+	- Lot of repetition between the background and main body DSL explanations
+		- how to avoid this?
+		- could be more general in background and more specific (like now) in main body?
+
+	- final DSL definition
+		- Should this be in terms of the financial contract? i.e. payments dont occur on acquisition but balance changes do
+
+	- DSL Name
+		- since it's not my language, should this just be an alias/nickname for convenience, or should I act like it's an official name?
+		- how to differentiate between SPJ and my dsl
+
+	- Single page printing? Or front-and-back?
+
+	- Could have SPJ in acknowledgements, for inspiring the project?
+
+	- Double check on plagiarism safety of explaining the SPJ language stuff
+		- Using similar syntax, is this bad?
+
+	- Is background meant to include conclusions on technologies/approaches to use, or just suggest options?
+		- also, what should conclusion contain? currently just summing up all previous options/decisions made
+
+	- Original DSL BNF
+		- No concrete syntax actually given
+		- The only difference between original BNF and my BNF is that observables are not given a concrete BNF representation
+		- As such, seems a bit pointless to compare the two directly, and to make an interpreted BNF for the original DSL
+
+	- Requirements in FSC chapter
+		- Is it clear that they're devised by me, not obtained from an external source?
+
+	- Background
+		- Is it absolutely necessarty to talk about competing things in the field?
+		- If so, there's not much except the SPJ paper stuff
+		- Could maybe talk about stuff like solidity/flint at a stretch, but not much utility as they have different purposes (maybe this is fine as motivation?)
+
+
+Interview topics:
+	- Sit people down with the web client
+	- Walk through functionality and DSL
+	- Compare to existing smart contract languages, is this easier than writing the equivalent?
+	- Would it be good to be able to deal with smart contract via CLI instead of web client?
+	- Any functionality missing?
+	- Any potential functionality that could be added?
+	- Any user-experience tweaks that could be made?
+	- Maaybe ask private vs public blockchain, kind of unnecessary probably
+
+
+Report TODO/Plan: ALL DONE
+	- Edit based on feedback (0.5 days)
+	- Decide on interview topics for evaluation (0.25 days)
+	- Write solidity financial smart contracts (0.25-0.5 days)
+	- Have interviews (0.25 days)
+	- Edit based on name - call DSL by name "SmartFin", call contracts financial smart contract or <name> contract (to distinguish the two) (0.5 days)
+		- Take special care with background to differentiate these, may need to re-write a fair bit of the DSL section
+	- Re-structure based on feedback (0.25 days)
+		- Move combinator language to own section at start of main body, alter to remove repetition (mainly highlight differences from original DSL)
+	- Decide upon serialize and edit report to match (quick)
+	- Write up final evaluation section (0.75 days)
+	- Check other papers for how to end evaluation (0.1 day)
+	- Write introduction/conclusion (0.5 day)
+		- mention iteration/etc explicitly as source of bugs (as in feedback) in intro
+	- Abstract/acknowledgements (0.25 days)
+	- Add code listing for reentrancy vulnerability, user manual appendix, and other appendices (FSC ABI, evaluation solidity contract examples) (0.1 days)
+	- Pictures/diagrams (block diagrams, other useful diagrams) (1 day)
+		- Add screenshots to web client chapter (done)
+		- block diagrams, include lines of code
+		- FSMs where useful for processes
+		- Other misc diagrams
+	- Add LoC and number for tests in evaluations (0.1 days)
+	- Code highlighting for Rust and Solidity - attribute in footnote on first usage
+	- Reflections in conclusion - what can be done differently (0.1 days)
+	- Change name to "SmartFin - Implementing a Financial Domain-Specific Language for Smart Contracts"
+	- Final editing (until deadline)
+	- Print (front and back)
+
+
+
+
+========== 18th Jun ==========
+
+Started on presentation:
+	- Written slides for structure (titles, bullets)
+
+Done some bug fixing:
+	- safe_add and assert_U256_can_be_i64 both check i64 max as 2^62 but it should be 2^62 + (2^62 - 1)
+	- to_i64 and from_i64 check unsigned > 2^63, but should be unsigned >= 2^63
+	- get_withdrawal_amount should panic if withdrawal amount hits 0 or negative
+	- update shouldn't call get_concluded, causes double reading/deserialization of combinators. Check gas costs after this for table in report (but too late to update report, just for reference)
+		- Instead, implemented is_combinator_concluded(combinator) method, both get_concluded and update call get_combinator and pass it to the new static function
+	- Don't allow two observables with same name and arbiter on web client, no way to differentiate but if acquired at different times their values may differ.
+	- rename contract in contract_utils loadAndDeployContract function (currently called TestContract)
+	- change contract_utils functions to just throw an error if no web3, instead of trying the default web3 connection
+	- delete isValidAddress (not used)
+	- In evaluator, check that the horizon of combinators doesn't spill over, e.g. for and one truncate 2 zero, the "one" should have undefined horizon but the nextmap may point to 2
+		- Add undefined to horizon map for one and zero
+
+
+
+
+========== 19th Jun ==========
+
+Making full first draft of presentation:
+	- "Script" Notes
+	- Demo ideas
+	- First draft of presentation
+
+
+
+
+========== 20th Jun ==========
+
+Practice feedback:
+	- explaining combinators was hard to follow, english explanation on slide would be good
+	- Add a slide showing all combinators, maybe more detail in slides after conclusion
+	- horizons, truncate, etc need more explanation if talking about
+	- context for the problems, examples
+	- If talking about the tests at the end for DSLs, make sure its not misleading (like testing frameworks)
+	- "SmartFin financial contract" instead of SmartFin contract
+	- More careful about creating a smart contract, not compiles
+	- Compare solidity and smartfin on the slide (tiny text for solidity)
+	- Add languages to architecture diagram
+	- Remove technical stuff from evaluator, have slides for these at the end and allow questions for this
+	- Remove web client slide
+	- Introduction - panos says small financial contracts take about 2 weeks
+	- Bespoke Solidity contract could be shown early on to provide context, could be used for a storyline/narrative
+
+Done Slides:
+	- Added solidity code for "one" to slides, for easy visual comparison of difficulty of implementaiton
+	- Removed stuff about time slices and ring data structure from evaluator slides
+	- Removed web client slide
+	- Added panos 2 week contract writing time to intro
+	- Add languages to architecture diagram
+	- Add slide showing all combinators (briefly)
+	- Add english explanation for combinators
+	- Use examples for the problem slides
+
+
+
+
+========== 21st Jun ==========
+
+Code done:
+	- Don't clean by default anymore when running client or tests, now need to run "run-node.sh --clean" explicitly to clean
+	- Update readme
+	- Edit client to call DSL "SmartFin"
+	- Highlighted anytime/or for evaluation view
+	- Highlighted or for set or choice view
+	- Highlighted anytime for acquire sub-contract view
+	- Cannot check if anytime is acquirable, requires access to or-choices etc. Would be better to send the boolean from the smart contract, and free. Not going to do because requires changing tests etc.
+
+BUG FIX:
+	- GET ANYTIME... was broken in evaluator, deleting the ANYTIME acquisition time would lose the time that GET was supposed to acquire ANYTIME at, allowing acquisition in the past
+	- Auto acquisition in evaluator was also not checking for valid time slices, also showing times in the past (all the way back to 1970)
+	- GET ANYTIME.. in smart contract also broken, changed ANYTIME to set acquirable bool to false in acquire method, then set to true in update method once its acquisition time has passed
+
+
+
+
+========== 22nd Jun ==========
+
+Code done:
+	- Write Help screen in composition view
+
+Finishing "final" draft of presentation.
+	- Editing notes
+	- Added diagrams/text to main slides
+
+
+
+
+========== 23rd Jun ==========
+
+Code DONE:
+	- Allow newlines and tabs in composition editor if possible for demo
+	- Automatically focus on load contract input and contract composition input on mounting
+	- Fixed evaluator setting whole contract to lower case, splitContract no longer sets all atoms to lower case (never needed anyway) and case sensitive version removed
+	- Submitted preliminary archive
+
+Presentation run through:
+	Intro - 2:16
+	SmartFin Financial Contracts - 2:46
+	European Option Example - 3:15
+	SmartFin DSL - 3:59
+	SmartFin DSL Syntax - 4:10
+	Composition Demo - skipped
+	Smart Contract Implementation - 4:55
+	Problems - 5:24
+	Retroactive Payment - 6:10
+	More Problems - 6:57
+	Observable arbiters - 7:54
+	Contract Interaction and Evaluation demo - skipped
+	SmartFin Financial Contract Evaluation - 9:00
+	Evaluation - 9:54
+	Evaluation - Case Studies - 10:58
+	Evaluation - Case Studies 2 - 12:07
+	Conclusion - 12:53
+	Thanks for listening - 13:00
+
+
+
+========== 24th Jun ==========
+
+Removed conclusion slides
+Run through slides, 22.5 mins, no notes
+Done
+	- Double check metamask with other blockchain (Kovan)
+	- Check for "easter eggs" (should be none) and remove (and in report too)
+
+
+
+
