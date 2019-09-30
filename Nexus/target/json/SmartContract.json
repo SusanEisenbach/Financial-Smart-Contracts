@@ -1,0 +1,130 @@
+[
+  {
+    "type": "function",
+    "name": "balanceOfAddress",
+    "inputs": [
+      {
+        "name": "_address",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "returnValue0",
+        "type": "uint256"
+      }
+    ],
+    "constant": true,
+    "payable": false
+  },
+  {
+    "type": "function",
+    "name": "holderBalance",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "returnValue0",
+        "type": "uint256"
+      }
+    ],
+    "constant": true,
+    "payable": false
+  },
+  {
+    "type": "function",
+    "name": "counterPartyBalance",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "returnValue0",
+        "type": "uint256"
+      }
+    ],
+    "constant": true,
+    "payable": false
+  },
+  {
+    "type": "function",
+    "name": "holderAddress",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "returnValue0",
+        "type": "uint256"
+      }
+    ],
+    "constant": true,
+    "payable": false
+  },
+  {
+    "type": "function",
+    "name": "counterPartyAddress",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "returnValue0",
+        "type": "uint256"
+      }
+    ],
+    "constant": true,
+    "payable": false
+  },
+  {
+    "type": "function",
+    "name": "transfer",
+    "inputs": [
+      {
+        "name": "_from",
+        "type": "address"
+      },
+      {
+        "name": "_to",
+        "type": "address"
+      },
+      {
+        "name": "_amount",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [],
+    "constant": false,
+    "payable": false
+  },
+  {
+    "type": "function",
+    "name": "depositCollateral",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [],
+    "constant": false,
+    "payable": true
+  },
+  {
+    "type": "event",
+    "name": "TransferEvent",
+    "inputs": [
+      {
+        "name": "result",
+        "type": "int32",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "holder_address",
+        "type": "address"
+      },
+      {
+        "name": "counter_party_address",
+        "type": "address"
+      }
+    ]
+  }
+]
