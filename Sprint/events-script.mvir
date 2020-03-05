@@ -1,0 +1,8 @@
+import 0x0.LibraAccount;
+import {{sender}}.EventTracker;
+
+main() {
+    EventTracker.create();
+    EventTracker.emit_event();
+    return;
+}

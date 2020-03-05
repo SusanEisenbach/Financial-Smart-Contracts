@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "move",
+    "parser",
+    "sprintc",
+    "client",
+]

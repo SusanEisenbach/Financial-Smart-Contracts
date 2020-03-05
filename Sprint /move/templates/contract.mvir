@@ -1,0 +1,112 @@
+module Contract {
+    {%- for dependency in self.dependencies() %}
+    import {{ dependency }};
+    {%- endfor %}
+
+    resource T {
+        coinstores: Vector.T<LibraCoin.T>,
+        contexts: Vector.T<Self.Context>,
+    }
+
+    resource Context {
+        state: u64,
+        coinstore_index: u64,
+        party: address,
+        counterparty: address,
+        scale: u64,
+        stack: Vector.T<u64>,
+    }
+
+    // Initialize the module with a master resource.
+    public create() {
+        let contract: Self.T;
+
+        contract = T {
+            coinstores: Vector.empty<LibraCoin.T>(),
+            contexts: Vector.empty<Self.Context>(),
+        };
+
+        move_to_sender<T>(move(contract));
+
+        return;
+    }
+
+    // Initialize a contract with a party and counterparty.
+    public initialize(owner: address, party: address, counterparty: address) acquires T {
+        let contract_ref: &mut Self.T;
+        let coinstore_index: u64;
+        let event: LibraAccount.EventHandle<u64>;
+
+        contract_ref = borrow_global_mut<T>(move(owner));
+        coinstore_index = Vector.length<Self.Context>(&copy(contract_ref).contexts);
+        Vector.push_back<LibraCoin.T>(&mut copy(contract_ref).coinstores, LibraCoin.zero());
+
+        Vector.push_back<Self.Context>(&mut move(contract_ref).contexts, Context {
+            state: {{ initial_state }},
+            coinstore_index: move(coinstore_index),
+            party: move(party),
+            counterparty: move(counterparty),
+            scale: 1,
+            stack: Vector.empty<u64>(),
+        });
+
+        event = LibraAccount.new_event_handle<u64>();
+        LibraAccount.emit_event<u64>(&mut event, {{ initial_state }});
+        LibraAccount.destroy_handle<u64>(move(event));
+
+        return;
+    }
+
+    public deposit(owner: address, coin: LibraCoin.T, coinstore_index: u64) acquires T {
+        LibraCoin.deposit(
+            Vector.borrow_mut<LibraCoin.T>(
+                &mut borrow_global_mut<T>(move(owner)).coinstores,
+                move(coinstore_index)
+            ),
+            move(coin));
+
+        return;
+    }
+
+    {% for method in methods -%}
+    {{ method }}
+
+    {% endfor -%}
+
+    clone_stack(original: &Vector.T<u64>): Vector.T<u64> {
+        let i: u64;
+        let length: u64;
+        let new: Vector.T<u64>;
+
+        i = 0;
+        length = Vector.length<u64>(copy(original));
+        new = Vector.empty<u64>();
+
+        while (copy(i) < copy(length)) {
+            Vector.push_back<u64>(&mut new, Vector.get<u64>(copy(original), copy(i)));
+            i = copy(i) + 1;
+        }
+
+        return move(new);
+    }
+
+    expand_stack(stack: &mut Vector.T<u64>, index: u64): u64 {
+        let state: u64;
+        let args: Vector.T<u64>;
+        state = Vector.get<u64>(freeze(copy(stack)), copy(index));
+        args = Vector.empty<u64>();
+
+        while (copy(state) >= {{ stack_offset }}) {
+            index = move(state) - {{ stack_offset }};
+            Vector.push_back<u64>(&mut args, Vector.get<u64>(freeze(copy(stack)), copy(index) + 1));
+            state = Vector.get<u64>(freeze(copy(stack)), copy(index));
+        }
+
+        while (!Vector.is_empty<u64>(&args)) {
+            Vector.push_back<u64>(copy(stack), Vector.pop_back<u64>(&mut args));
+        }
+
+        Vector.destroy_empty<u64>(move(args));
+        return move(state);
+    }
+}

@@ -1,0 +1,11 @@
+module Events {
+   resource MyEvent {
+        state: u64,
+    }
+
+    public my_event(state: u64): Self.MyEvent {
+        return MyEvent {
+                state: move(state),
+            };
+    }
+}

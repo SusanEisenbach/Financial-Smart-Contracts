@@ -1,0 +1,9 @@
+import 0x0.LibraAccount;
+import 0x0.LibraCoin;
+import {{author}}.{{module}};
+
+main() {
+    {{module}}.deposit({{author}}, LibraAccount.withdraw_from_sender({{amount}}), {{coin_store_index}});
+
+    return;
+}

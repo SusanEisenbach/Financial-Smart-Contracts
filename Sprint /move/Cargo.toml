@@ -1,0 +1,21 @@
+[package]
+name = "sprint-move"
+version = "0.1.0"
+authors = [
+    "Alex Nielsen <alex@hitecherik.net>",
+    "Ivan Kapelyukh <ivankapelyukh@gmail.com>",
+    "Pablo Gamito <pablo@gamito.me>",
+    "Tom Claydon <tom@claydon.me.uk>",
+    "Zak Cutner <me@zakcutner.uk>"
+]
+edition = "2018"
+
+[dependencies]
+askama = "0.8.0"
+chrono = "0.4.10"
+lazy_static = "1.4.0"
+sprint-parser = { path = "../parser" }
+
+[dev-dependencies]
+functional_tests = { git = "https://github.com/libra/libra" }
+termcolor = "1"
